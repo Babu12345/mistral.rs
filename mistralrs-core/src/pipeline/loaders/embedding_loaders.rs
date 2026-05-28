@@ -43,6 +43,22 @@ pub trait EmbeddingModel: IsqModel + AnyMoeBaseModelMixin {
         flash_params: &FlashParams,
     ) -> candle_core::Result<Tensor>;
     fn device(&self) -> &Device;
+
+    // Vision-input forward for multimodal embedding models (e.g. Qwen3-VL-Embedding).
+    // Default returns an error so text-only models don't need to implement it.
+    #[allow(clippy::too_many_arguments)]
+    fn forward_vision(
+        &self,
+        _input_ids: &Tensor,
+        _pixel_values: &Tensor,
+        _image_grid_thw: &Tensor,
+        _seqlens: Vec<usize>,
+        _continuous_img_pad: Vec<Vec<(usize, usize)>>,
+        _image_hashes: &[u64],
+        _flash_params: &FlashParams,
+    ) -> candle_core::Result<Tensor> {
+        candle_core::bail!("forward_vision is not implemented for this embedding model")
+    }
 }
 
 pub trait EmbeddingModelLoader: IsqModelLoader + Send + Sync + DeviceMappedModelLoader {
@@ -56,6 +72,12 @@ pub trait EmbeddingModelLoader: IsqModelLoader + Send + Sync + DeviceMappedModel
     fn is_gptx(&self, config: &str) -> Result<bool>;
     fn has_causal_attention(&self, config: &str) -> Result<bool>;
     fn get_config_repr(&self, config: &str) -> Result<Box<dyn Debug>>;
+
+    // Whether this loader produces a model that accepts image input. Gates
+    // image-aware request routing and modality reporting in the pipeline.
+    fn supports_vision(&self) -> bool {
+        false
+    }
     fn get_device_for_tensor(
         &self,
         config: &str,
@@ -93,6 +115,8 @@ pub enum EmbeddingLoaderType {
     EmbeddingGemma,
     #[serde(rename = "qwen3embedding")]
     Qwen3Embedding,
+    #[serde(rename = "qwen3vlembedding")]
+    Qwen3VLEmbedding,
 }
 
 // https://github.com/huggingface/transformers/blob/cff06aac6fad28019930be03f5d467055bf62177/src/transformers/models/auto/modeling_auto.py#L448
@@ -101,6 +125,11 @@ impl EmbeddingLoaderType {
         match name {
             "Gemma3TextModel" => Ok(Self::EmbeddingGemma),
             "Qwen3ForCausalLM" => Ok(Self::Qwen3Embedding),
+            // Qwen3-VL-Embedding-2B publishes config.json with architectures =
+            // ["Qwen3VLForConditionalGeneration"] (same base as the Instruct
+            // model). The contrastive head sits on top; we detect on arch + a
+            // sentence-transformers modules.json sibling.
+            "Qwen3VLForConditionalGeneration" => Ok(Self::Qwen3VLEmbedding),
             other => anyhow::bail!(
                 "Unsupported Hugging Face Transformers model class `{other}`. Please raise an issue."
             ),
@@ -114,8 +143,9 @@ impl FromStr for EmbeddingLoaderType {
         match s {
             "embeddinggemma" => Ok(Self::EmbeddingGemma),
             "qwen3embedding" => Ok(Self::Qwen3Embedding),
+            "qwen3vlembedding" => Ok(Self::Qwen3VLEmbedding),
             a => Err(format!(
-                "Unknown architecture `{a}`. Possible architectures: `embeddinggemma`, `qwen3embedding`."
+                "Unknown architecture `{a}`. Possible architectures: `embeddinggemma`, `qwen3embedding`, `qwen3vlembedding`."
             )),
         }
     }
@@ -126,6 +156,7 @@ impl Display for EmbeddingLoaderType {
         match self {
             Self::EmbeddingGemma => write!(f, "embeddinggemma"),
             Self::Qwen3Embedding => write!(f, "qwen3embedding"),
+            Self::Qwen3VLEmbedding => write!(f, "qwen3vlembedding"),
         }
     }
 }
@@ -280,6 +311,9 @@ impl AutoEmbeddingLoader {
         match tp {
             EmbeddingLoaderType::EmbeddingGemma => Ok(Box::new(EmbeddingGemmaLoader)),
             EmbeddingLoaderType::Qwen3Embedding => Ok(Box::new(Qwen3EmbeddingLoader)),
+            EmbeddingLoaderType::Qwen3VLEmbedding => {
+                anyhow::bail!("Qwen3VLEmbeddingLoader lands in Batch C; auto-loading not yet wired")
+            }
         }
     }
 }

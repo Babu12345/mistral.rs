@@ -163,6 +163,9 @@ impl EmbeddingLoaderBuilder {
         let loader: Box<dyn EmbeddingModelLoader> = match loader {
             Some(EmbeddingLoaderType::EmbeddingGemma) => Box::new(EmbeddingGemmaLoader),
             Some(EmbeddingLoaderType::Qwen3Embedding) => Box::new(Qwen3EmbeddingLoader),
+            Some(EmbeddingLoaderType::Qwen3VLEmbedding) => {
+                unimplemented!("Qwen3VLEmbeddingLoader lands in Batch C")
+            }
             None => Box::new(AutoEmbeddingLoader),
         };
         Box::new(EmbeddingLoader {

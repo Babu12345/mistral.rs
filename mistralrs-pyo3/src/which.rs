@@ -66,6 +66,7 @@ impl From<Architecture> for NormalLoaderType {
 pub enum EmbeddingArchitecture {
     EmbeddingGemma,
     Qwen3Embedding,
+    Qwen3VLEmbedding,
 }
 
 impl From<EmbeddingArchitecture> for EmbeddingLoaderType {
@@ -73,6 +74,7 @@ impl From<EmbeddingArchitecture> for EmbeddingLoaderType {
         match value {
             EmbeddingArchitecture::EmbeddingGemma => EmbeddingLoaderType::EmbeddingGemma,
             EmbeddingArchitecture::Qwen3Embedding => EmbeddingLoaderType::Qwen3Embedding,
+            EmbeddingArchitecture::Qwen3VLEmbedding => EmbeddingLoaderType::Qwen3VLEmbedding,
         }
     }
 }
