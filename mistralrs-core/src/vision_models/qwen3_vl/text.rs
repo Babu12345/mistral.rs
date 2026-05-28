@@ -505,10 +505,36 @@ impl Qwen3VLTextModel {
     #[allow(clippy::too_many_arguments)]
     pub fn forward_embeds(
         &self,
-        mut xs: Tensor,
+        xs: Tensor,
         attention_mask: &AttentionMask,
         position_ids: &Tensor,
         context_lens: Vec<(usize, usize)>,
+        metadata: Option<(Vec<(Tensor, Tensor)>, &PagedAttentionInputMetadata)>,
+        flash_params: &FlashParams,
+        visual_pos_masks: Option<&Tensor>,
+        deepstack_visual_embeds: Option<&[Tensor]>,
+    ) -> Result<Tensor> {
+        let xs = self.forward_embeds_hidden_states(
+            xs,
+            attention_mask,
+            position_ids,
+            metadata,
+            flash_params,
+            visual_pos_masks,
+            deepstack_visual_embeds,
+        )?;
+        let xs = extract_logits(&xs, context_lens)?;
+        self.lm_head.forward(&xs)
+    }
+
+    // Hidden-states-only variant for callers that don't want lm_head projection,
+    // e.g. the Qwen3-VL-Embedding model which pools the last hidden state.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn forward_embeds_hidden_states(
+        &self,
+        mut xs: Tensor,
+        attention_mask: &AttentionMask,
+        position_ids: &Tensor,
         metadata: Option<(Vec<(Tensor, Tensor)>, &PagedAttentionInputMetadata)>,
         flash_params: &FlashParams,
         visual_pos_masks: Option<&Tensor>,
@@ -534,7 +560,6 @@ impl Qwen3VLTextModel {
                 flash_params,
             )?;
 
-            // Integrate DeepStack visual features when provided.
             if let (Some(visual_pos_masks), Some(deepstack)) =
                 (visual_pos_masks, deepstack_visual_embeds)
             {
@@ -544,9 +569,7 @@ impl Qwen3VLTextModel {
             }
         }
         let xs = xs.to_device(&self.device)?;
-        let xs = xs.apply(&self.norm)?;
-        let xs = extract_logits(&xs, context_lens)?;
-        self.lm_head.forward(&xs)
+        xs.apply(&self.norm)
     }
 
     /// Matches transformers `_deepstack_process`:
