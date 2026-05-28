@@ -367,15 +367,15 @@ impl DecoderLayer {
 
 pub struct Qwen3VLTextModel {
     embed_tokens: Embedding,
-    pub(super) norm: F32RmsNorm,
+    pub(crate) norm: F32RmsNorm,
     layers: Vec<DecoderLayer>,
     mapper: Box<dyn DeviceMapper + Send + Sync>,
     lm_head: Arc<dyn QuantMethod>,
-    pub(super) cache: EitherCache,
-    pub(super) cfg: ModelConfigMetadata,
-    pub(super) device: Device,
-    pub(super) dtype: DType,
-    pub(super) max_seq_len: usize,
+    pub(crate) cache: EitherCache,
+    pub(crate) cfg: ModelConfigMetadata,
+    pub(crate) device: Device,
+    pub(crate) dtype: DType,
+    pub(crate) max_seq_len: usize,
 }
 
 impl Qwen3VLTextModel {
