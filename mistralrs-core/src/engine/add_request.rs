@@ -99,7 +99,8 @@ impl Engine {
             | RequestMessage::ImageGeneration { .. }
             | RequestMessage::SpeechGeneration { .. }
             | RequestMessage::Embedding { .. }
-            | RequestMessage::EmbeddingTokens { .. } => None,
+            | RequestMessage::EmbeddingTokens { .. }
+            | RequestMessage::EmbeddingMultimodal { .. } => None,
         };
         let truncate_sequence = request.truncate_sequence;
         if is_chat
@@ -134,7 +135,9 @@ impl Engine {
             (ModelCategory::Speech, RequestMessage::SpeechGeneration { .. }) => (),
             (
                 ModelCategory::Embedding,
-                RequestMessage::Embedding { .. } | RequestMessage::EmbeddingTokens { .. },
+                RequestMessage::Embedding { .. }
+                | RequestMessage::EmbeddingTokens { .. }
+                | RequestMessage::EmbeddingMultimodal { .. },
             ) => (),
             _ => {
                 request
@@ -179,7 +182,8 @@ impl Engine {
             RequestMessage::ImageGeneration { .. }
             | RequestMessage::SpeechGeneration { .. }
             | RequestMessage::Embedding { .. }
-            | RequestMessage::EmbeddingTokens { .. } => SeqStepType::OneShot,
+            | RequestMessage::EmbeddingTokens { .. }
+            | RequestMessage::EmbeddingMultimodal { .. } => SeqStepType::OneShot,
             _ => SeqStepType::PromptAndDecode,
         };
 
@@ -224,7 +228,8 @@ impl Engine {
                 handle_seq_error!(template, request.response)
             }
             RequestMessage::Completion { text, .. }
-            | RequestMessage::Embedding { prompt: text } => {
+            | RequestMessage::Embedding { prompt: text }
+            | RequestMessage::EmbeddingMultimodal { prompt: text, .. } => {
                 let Some(tokenizer) = &get_mut_arcmutex!(self.pipeline).tokenizer() else {
                     request
                         .response

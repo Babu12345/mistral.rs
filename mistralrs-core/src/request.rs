@@ -109,6 +109,11 @@ pub enum RequestMessage {
     EmbeddingTokens {
         prompt: Vec<u32>,
     },
+    EmbeddingMultimodal {
+        prompt: String,
+        #[serde(skip)]
+        images: Vec<image::DynamicImage>,
+    },
 }
 
 fn default_responder<T>() -> Sender<T> {

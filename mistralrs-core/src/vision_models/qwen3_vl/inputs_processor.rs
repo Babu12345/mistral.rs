@@ -690,8 +690,8 @@ impl Qwen3VLImageProcessor {
         Ok((h_bar, w_bar))
     }
 
-    // patches and t,h,w
-    fn preprocess_inner(
+    // patches and t,h,w. pub(crate) so the embedding pipeline can reuse it for Qwen3-VL-Embedding.
+    pub(crate) fn preprocess_inner(
         &self,
         images: Vec<DynamicImage>,
         config: &PreProcessorConfig,

@@ -29,7 +29,7 @@ use crate::{
 
 pub(crate) mod config;
 pub(crate) mod inputs_processor;
-mod text;
+pub(crate) mod text;
 pub(crate) mod vision;
 
 pub(crate) use config::Config;
