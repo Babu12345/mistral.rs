@@ -39,7 +39,7 @@ pub use multimodal_loaders::{
 pub use embedding_loaders::{
     AutoEmbeddingLoader, EmbeddingGemmaLoader, EmbeddingLoaderType, EmbeddingModel,
     EmbeddingModelLoader, EmbeddingModule, EmbeddingModulePaths, EmbeddingModuleType,
-    Qwen3EmbeddingLoader,
+    Qwen3EmbeddingLoader, Qwen3VLEmbeddingLoader,
 };
 
 pub use diffusion_loaders::{

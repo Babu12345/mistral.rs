@@ -21,7 +21,7 @@ use crate::pipeline::EmbeddingModel;
 use crate::pipeline::EmbeddingModelLoader;
 use crate::pipeline::{AutoEmbeddingLoader, EmbeddingModulePaths};
 use crate::pipeline::{ChatTemplate, EmbeddingModelPaths, IsqOrganization, Processor};
-use crate::pipeline::{EmbeddingGemmaLoader, Qwen3EmbeddingLoader};
+use crate::pipeline::{EmbeddingGemmaLoader, Qwen3EmbeddingLoader, Qwen3VLEmbeddingLoader};
 use crate::prefix_cacher::PrefixCacheManagerV2;
 use crate::sequence::Sequence;
 use crate::utils::tokenizer::get_tokenizer;
@@ -163,9 +163,7 @@ impl EmbeddingLoaderBuilder {
         let loader: Box<dyn EmbeddingModelLoader> = match loader {
             Some(EmbeddingLoaderType::EmbeddingGemma) => Box::new(EmbeddingGemmaLoader),
             Some(EmbeddingLoaderType::Qwen3Embedding) => Box::new(Qwen3EmbeddingLoader),
-            Some(EmbeddingLoaderType::Qwen3VLEmbedding) => {
-                unimplemented!("Qwen3VLEmbeddingLoader lands in Batch C")
-            }
+            Some(EmbeddingLoaderType::Qwen3VLEmbedding) => Box::new(Qwen3VLEmbeddingLoader),
             None => Box::new(AutoEmbeddingLoader),
         };
         Box::new(EmbeddingLoader {

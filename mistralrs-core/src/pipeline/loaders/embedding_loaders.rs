@@ -311,9 +311,7 @@ impl AutoEmbeddingLoader {
         match tp {
             EmbeddingLoaderType::EmbeddingGemma => Ok(Box::new(EmbeddingGemmaLoader)),
             EmbeddingLoaderType::Qwen3Embedding => Ok(Box::new(Qwen3EmbeddingLoader)),
-            EmbeddingLoaderType::Qwen3VLEmbedding => {
-                anyhow::bail!("Qwen3VLEmbeddingLoader lands in Batch C; auto-loading not yet wired")
-            }
+            EmbeddingLoaderType::Qwen3VLEmbedding => Ok(Box::new(Qwen3VLEmbeddingLoader)),
         }
     }
 }
@@ -771,5 +769,203 @@ impl DeviceMappedModelLoader for Qwen3EmbeddingLoader {
         };
 
         Ok(Box::new(cfg))
+    }
+}
+
+// Qwen3-VL-Embedding-2B. Wraps the Qwen3-VL Instruct architecture sans LM head.
+// Vision tower weights stay unquantized; only the text transformer layers go
+// through ISQ. Sizing draws from the text_config since the vision tower is
+// loaded off-mapper (lives entirely on the embedding model's device).
+pub struct Qwen3VLEmbeddingLoader;
+
+impl EmbeddingModelLoader for Qwen3VLEmbeddingLoader {
+    fn load(
+        &self,
+        config: &str,
+        vb: ShardedVarBuilder,
+        normal_loading_metadata: NormalLoadingMetadata,
+        attention_mechanism: AttentionImplementation,
+    ) -> Result<Box<dyn EmbeddingModel + Send + Sync>> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        Ok(Box::new(
+            crate::embedding_models::qwen3_vl_embedding::Model::new(
+                &cfg,
+                vb,
+                self.is_gptx(config)?,
+                normal_loading_metadata,
+                attention_mechanism,
+            )?,
+        ))
+    }
+    fn has_causal_attention(&self, _: &str) -> Result<bool> {
+        Ok(true)
+    }
+    fn is_gptx(&self, _: &str) -> Result<bool> {
+        Ok(true)
+    }
+    fn get_config_repr(&self, config: &str) -> Result<Box<dyn Debug>> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        Ok(Box::new(cfg))
+    }
+    fn supports_vision(&self) -> bool {
+        true
+    }
+}
+
+impl IsqModelLoader for Qwen3VLEmbeddingLoader {
+    fn isq_layer_regexes(&self, _config: &str) -> Result<Vec<Regex>> {
+        // Match only text transformer projections. visual.* (vision tower) is
+        // explicitly excluded so it stays at original precision.
+        Ok(vec![
+            Regex::new(r"^(?:model\.)?layers\.(\d+)\.self_attn\.q_proj\.(weight|bias)$")?,
+            Regex::new(r"^(?:model\.)?layers\.(\d+)\.self_attn\.k_proj\.(weight|bias)$")?,
+            Regex::new(r"^(?:model\.)?layers\.(\d+)\.self_attn\.v_proj\.(weight|bias)$")?,
+            Regex::new(r"^(?:model\.)?layers\.(\d+)\.self_attn\.o_proj\.(weight|bias)$")?,
+            Regex::new(r"^(?:model\.)?layers\.(\d+)\.mlp\.gate_proj\.(weight|bias)$")?,
+            Regex::new(r"^(?:model\.)?layers\.(\d+)\.mlp\.up_proj\.(weight|bias)$")?,
+            Regex::new(r"^(?:model\.)?layers\.(\d+)\.mlp\.down_proj\.(weight|bias)$")?,
+        ])
+    }
+    fn immediate_isq_predicates(&self, config: &str) -> Result<Vec<Regex>> {
+        self.isq_layer_regexes(config)
+    }
+}
+
+impl DeviceMappedModelLoader for Qwen3VLEmbeddingLoader {
+    fn mapped_max_act_size_elems(
+        &self,
+        config: &str,
+        params: &AutoDeviceMapParams,
+    ) -> Result<usize> {
+        // Embedding requests are single-shot prompts. Accept either Text or
+        // Multimodal sizing params depending on how the auto-mapper invoked us.
+        let (max_seq, max_bs) = match params {
+            AutoDeviceMapParams::Text {
+                max_seq_len,
+                max_batch_size,
+            } => (*max_seq_len, *max_batch_size),
+            AutoDeviceMapParams::Multimodal {
+                max_seq_len,
+                max_batch_size,
+                ..
+            } => (*max_seq_len, *max_batch_size),
+        };
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        Ok(max_bs * cfg.text_config.num_attention_heads * max_seq.min(ATTENTION_CHUNK_SIZE).pow(2))
+    }
+    fn non_mapped_max_act_size_elems(
+        &self,
+        _config: &str,
+        _params: &AutoDeviceMapParams,
+    ) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn non_mapped_size_in_bytes(
+        &self,
+        config: &str,
+        dtype: DType,
+        weight_pack_factor: usize,
+        _matformer_config: Option<&MatformerSliceConfig>,
+    ) -> Result<usize> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        let text = &cfg.text_config;
+        let text_elems = {
+            let embed_tokens = text.hidden_size * text.vocab_size / weight_pack_factor;
+            let lm_head = if !cfg.tie_word_embeddings || weight_pack_factor != 1 {
+                text.hidden_size * text.vocab_size / weight_pack_factor
+            } else {
+                0
+            };
+            let norm = text.hidden_size;
+            embed_tokens + lm_head + norm
+        };
+        // Vision tower lives off-mapper (single device). Approximation: depth
+        // layers of attention + MLP at vision hidden_size, plus the patch embed.
+        // Vision weights are NOT ISQ'd, so weight_pack_factor doesn't apply.
+        let vision = &cfg.vision_config;
+        let vision_elems = {
+            let per_layer = 4 * vision.hidden_size * vision.hidden_size
+                + 3 * vision.hidden_size * vision.intermediate_size
+                + 2 * vision.hidden_size;
+            let patch_embed = vision.in_chans
+                * vision.hidden_size
+                * vision.patch_size
+                * vision.patch_size
+                * vision.temporal_patch_size;
+            let merger = vision.hidden_size * vision.out_hidden_size;
+            vision.depth * per_layer + patch_embed + merger
+        };
+        Ok((text_elems + vision_elems) * dtype.size_in_bytes())
+    }
+
+    fn layer_sizes_in_bytes(
+        &self,
+        config: &str,
+        dtype: DType,
+        weight_pack_factor: usize,
+        _matformer_config: Option<&MatformerSliceConfig>,
+    ) -> Result<Vec<usize>> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        let text = &cfg.text_config;
+        let per_layer_elems = {
+            let input_layernorm = text.hidden_size;
+            let post_attention_layernorm = text.hidden_size;
+
+            let size_in = text.hidden_size;
+            let size_q = text.head_dim * text.num_attention_heads;
+            let size_kv = text.head_dim * text.num_key_value_heads;
+            let q_proj = size_in * size_q / weight_pack_factor + size_q;
+            let k_proj = size_in * size_kv / weight_pack_factor + size_kv;
+            let v_proj = size_in * size_kv / weight_pack_factor + size_kv;
+            let o_proj = size_q * size_in / weight_pack_factor;
+
+            let h_size = text.hidden_size;
+            let i_size = text.intermediate_size;
+            let gate_proj = h_size * i_size / weight_pack_factor;
+            let up_proj = h_size * i_size / weight_pack_factor;
+            let down_proj = i_size * h_size / weight_pack_factor;
+
+            let q_norm = text.head_dim;
+            let k_norm = text.head_dim;
+
+            input_layernorm
+                + post_attention_layernorm
+                + q_proj
+                + k_proj
+                + v_proj
+                + o_proj
+                + gate_proj
+                + up_proj
+                + down_proj
+                + q_norm
+                + k_norm
+        };
+        Ok(vec![
+            per_layer_elems * dtype.size_in_bytes();
+            text.num_hidden_layers
+        ])
+    }
+
+    fn num_layers(&self, config: &str) -> Result<usize> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        Ok(cfg.text_config.num_hidden_layers)
+    }
+
+    fn model_config(&self, config: &str) -> Result<Box<dyn ModelConfigLike>> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        let text = &cfg.text_config;
+        let cfg_meta = ModelConfigMetadata {
+            max_seq_len: text.max_position_embeddings,
+            num_layers: text.num_hidden_layers,
+            hidden_size: text.hidden_size,
+            num_kv_heads: text.num_key_value_heads,
+            num_attn_heads: text.num_attention_heads,
+            sliding_window: text.sliding_window,
+            k_head_dim: text.head_dim,
+            v_head_dim: text.head_dim,
+            kv_cache_layout: crate::paged_attention::KvCacheLayout::Standard,
+        };
+        Ok(Box::new(cfg_meta))
     }
 }
