@@ -2,16 +2,29 @@ use candle_core::{IndexOp, Result, Tensor, D};
 use candle_nn::Module;
 use serde::Deserialize;
 
+// Helper for serde defaults; sentence-transformers JSONs sometimes drop fields.
+fn default_true() -> bool {
+    true
+}
+
 /// Pooling layer
 #[derive(Deserialize, Debug, Clone)]
 pub struct Pooling {
-    pub word_embedding_dimension: usize,
+    #[serde(default)]
+    pub word_embedding_dimension: Option<usize>,
+    #[serde(default)]
     pub pooling_mode_cls_token: bool,
+    #[serde(default)]
     pub pooling_mode_mean_tokens: bool,
+    #[serde(default)]
     pub pooling_mode_max_tokens: bool,
+    #[serde(default)]
     pub pooling_mode_mean_sqrt_len_tokens: bool,
+    #[serde(default)]
     pub pooling_mode_weightedmean_tokens: bool,
+    #[serde(default)]
     pub pooling_mode_lasttoken: bool,
+    #[serde(default = "default_true")]
     pub include_prompt: bool,
 }
 
@@ -21,8 +34,10 @@ impl Module for Pooling {
         if !self.include_prompt {
             candle_core::bail!("Only support include_prompt==true");
         }
-        if xs.dim(D::Minus1)? != self.word_embedding_dimension {
-            candle_core::bail!("xs does not match the expected embedding dimension.");
+        if let Some(expected) = self.word_embedding_dimension {
+            if xs.dim(D::Minus1)? != expected {
+                candle_core::bail!("xs does not match the expected embedding dimension.");
+            }
         }
 
         let mut outputs = Vec::new();
