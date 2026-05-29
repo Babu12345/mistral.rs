@@ -825,16 +825,20 @@ impl EmbeddingModelLoader for Qwen3VLEmbeddingLoader {
 
 impl IsqModelLoader for Qwen3VLEmbeddingLoader {
     fn isq_layer_regexes(&self, _config: &str) -> Result<Vec<Regex>> {
-        // Match only text transformer projections. visual.* (vision tower) is
-        // explicitly excluded so it stays at original precision.
+        // Match the text transformer projections. Qwen3-VL-Embedding-2B uses
+        // the same weight naming as the Instruct variant: model.language_model.layers.N.*
+        // The visual.* path (vision tower) is deliberately excluded so it
+        // stays at original precision - retrieval quality is more sensitive
+        // to vision precision than to language head precision.
         Ok(vec![
-            Regex::new(r"^(?:model\.)?layers\.(\d+)\.self_attn\.q_proj\.(weight|bias)$")?,
-            Regex::new(r"^(?:model\.)?layers\.(\d+)\.self_attn\.k_proj\.(weight|bias)$")?,
-            Regex::new(r"^(?:model\.)?layers\.(\d+)\.self_attn\.v_proj\.(weight|bias)$")?,
-            Regex::new(r"^(?:model\.)?layers\.(\d+)\.self_attn\.o_proj\.(weight|bias)$")?,
-            Regex::new(r"^(?:model\.)?layers\.(\d+)\.mlp\.gate_proj\.(weight|bias)$")?,
-            Regex::new(r"^(?:model\.)?layers\.(\d+)\.mlp\.up_proj\.(weight|bias)$")?,
-            Regex::new(r"^(?:model\.)?layers\.(\d+)\.mlp\.down_proj\.(weight|bias)$")?,
+            Regex::new(r"lm_head\.(weight|bias)$")?,
+            Regex::new(r"model\.language_model\.layers\.(\d+)\.self_attn\.q_proj\.(weight|bias)$")?,
+            Regex::new(r"model\.language_model\.layers\.(\d+)\.self_attn\.k_proj\.(weight|bias)$")?,
+            Regex::new(r"model\.language_model\.layers\.(\d+)\.self_attn\.v_proj\.(weight|bias)$")?,
+            Regex::new(r"model\.language_model\.layers\.(\d+)\.self_attn\.o_proj\.(weight|bias)$")?,
+            Regex::new(r"model\.language_model\.layers\.(\d+)\.mlp\.gate_proj\.(weight|bias)$")?,
+            Regex::new(r"model\.language_model\.layers\.(\d+)\.mlp\.up_proj\.(weight|bias)$")?,
+            Regex::new(r"model\.language_model\.layers\.(\d+)\.mlp\.down_proj\.(weight|bias)$")?,
         ])
     }
     fn immediate_isq_predicates(&self, config: &str) -> Result<Vec<Regex>> {
