@@ -180,7 +180,16 @@ impl TryIntoDType for ModelDType {
 /// - CUDA integrated GPUs (e.g. NVIDIA Grace Hopper, Grace Blackwell)
 ///
 /// On such systems, loading tensors to CPU first provides no memory benefit.
+///
+/// Override: set MISTRALRS_FORCE_CPU_LOAD=1 to disable the integrated-GPU
+/// fast path. Useful on small integrated GPUs (e.g. Jetson Orin Nano) where
+/// the CUDA allocator's working set is the bottleneck even though host and
+/// device share physical RAM - staging through CPU lets each layer's bf16
+/// be dropped before the quantized output is allocated on device.
 pub fn is_integrated_gpu(device: &Device) -> bool {
+    if std::env::var("MISTRALRS_FORCE_CPU_LOAD").as_deref() == Ok("1") {
+        return false;
+    }
     match device {
         #[cfg(feature = "metal")]
         Device::Metal(_) => true,
