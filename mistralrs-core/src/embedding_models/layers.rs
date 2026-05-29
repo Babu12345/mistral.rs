@@ -63,6 +63,16 @@ impl Module for Pooling {
             outputs.push(xs.i((.., xs.dim(D::Minus2)? - 1, ..))?);
         }
 
+        // Newer sentence-transformers Pooling configs may use a single
+        // "pooling_mode": "lasttoken" string instead of the legacy boolean
+        // flags, so all boolean fields parse as false (their serde defaults).
+        // Fall back to last-token pooling - it matches Qwen3-VL-Embedding's
+        // documented behavior and is the only viable default for autoregressive
+        // embedding models.
+        if outputs.is_empty() {
+            outputs.push(xs.i((.., xs.dim(D::Minus2)? - 1, ..))?);
+        }
+
         Tensor::cat(&outputs, 1)
     }
 }
