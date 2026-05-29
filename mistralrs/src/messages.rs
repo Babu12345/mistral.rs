@@ -1199,6 +1199,12 @@ pub enum EmbeddingRequestInput {
     Prompt(String),
     /// Pre-tokenized input.
     Tokens(Vec<u32>),
+    /// Text prompt combined with one or more images. Requires a vision-capable
+    /// embedding model (e.g. Qwen3-VL-Embedding).
+    Multimodal {
+        prompt: String,
+        images: Vec<DynamicImage>,
+    },
 }
 
 impl EmbeddingRequestInput {
@@ -1207,6 +1213,9 @@ impl EmbeddingRequestInput {
         match self {
             Self::Prompt(prompt) => RequestMessage::Embedding { prompt },
             Self::Tokens(prompt) => RequestMessage::EmbeddingTokens { prompt },
+            Self::Multimodal { prompt, images } => {
+                RequestMessage::EmbeddingMultimodal { prompt, images }
+            }
         }
     }
 }
@@ -1275,6 +1284,16 @@ impl EmbeddingRequestBuilder {
     {
         self.inputs
             .extend(batches.into_iter().map(EmbeddingRequestInput::Tokens));
+        self
+    }
+
+    /// Add a multimodal embedding input (text + images). Requires a
+    /// vision-capable embedding model.
+    pub fn add_multimodal(mut self, prompt: impl Into<String>, images: Vec<DynamicImage>) -> Self {
+        self.inputs.push(EmbeddingRequestInput::Multimodal {
+            prompt: prompt.into(),
+            images,
+        });
         self
     }
 
