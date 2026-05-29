@@ -87,6 +87,18 @@ pub trait EmbeddingModelLoader: IsqModelLoader + Send + Sync + DeviceMappedModel
     fn vision_image_token_id(&self, _config: &str) -> Result<Option<u32>> {
         Ok(None)
     }
+
+    // For vision-capable loaders: PreProcessorConfig synthesized from the
+    // model's vision_config so patch_size / merge_size / temporal_patch_size
+    // match what the loaded vision tower expects. None means the input
+    // processor falls back to PreProcessorConfig::default (which is fine for
+    // text-only loaders).
+    fn vision_preprocessor_config(
+        &self,
+        _config: &str,
+    ) -> Result<Option<crate::vision_models::preprocessor_config::PreProcessorConfig>> {
+        Ok(None)
+    }
     fn get_device_for_tensor(
         &self,
         config: &str,
@@ -351,6 +363,12 @@ impl EmbeddingModelLoader for AutoEmbeddingLoader {
     }
     fn vision_image_token_id(&self, config: &str) -> Result<Option<u32>> {
         Self::get_loader(config)?.vision_image_token_id(config)
+    }
+    fn vision_preprocessor_config(
+        &self,
+        config: &str,
+    ) -> Result<Option<crate::vision_models::preprocessor_config::PreProcessorConfig>> {
+        Self::get_loader(config)?.vision_preprocessor_config(config)
     }
 }
 
@@ -830,6 +848,17 @@ impl EmbeddingModelLoader for Qwen3VLEmbeddingLoader {
     fn vision_image_token_id(&self, config: &str) -> Result<Option<u32>> {
         let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
         Ok(Some(cfg.image_token_id))
+    }
+    fn vision_preprocessor_config(
+        &self,
+        config: &str,
+    ) -> Result<Option<crate::vision_models::preprocessor_config::PreProcessorConfig>> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        let mut pre = crate::vision_models::preprocessor_config::PreProcessorConfig::default();
+        pre.patch_size = Some(cfg.vision_config.patch_size);
+        pre.merge_size = Some(cfg.vision_config.spatial_merge_size);
+        pre.temporal_patch_size = Some(cfg.vision_config.temporal_patch_size);
+        Ok(Some(pre))
     }
 }
 

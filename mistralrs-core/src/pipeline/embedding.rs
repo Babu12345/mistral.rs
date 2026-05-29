@@ -697,6 +697,15 @@ impl Loader for EmbeddingLoader {
                 } else {
                     None
                 },
+                vision_preprocessor_config: if self.inner.supports_vision(&config) {
+                    self.inner
+                        .vision_preprocessor_config(&config)
+                        .ok()
+                        .flatten()
+                        .map(Arc::new)
+                } else {
+                    None
+                },
             }),
             config,
         })))

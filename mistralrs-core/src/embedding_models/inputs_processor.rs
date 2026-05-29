@@ -142,6 +142,7 @@ pub struct ModelInputs {
 pub struct EmbeddingInputsProcessor {
     pub has_causal_attention: bool,
     pub vision_image_token_id: Option<u32>,
+    pub vision_preprocessor_config: Option<Arc<PreProcessorConfig>>,
 }
 
 impl EmbeddingInputsProcessor {
@@ -163,7 +164,11 @@ impl EmbeddingInputsProcessor {
             return Ok(None);
         }
 
-        let preproc_cfg = PreProcessorConfig::default();
+        let preproc_cfg = self
+            .vision_preprocessor_config
+            .clone()
+            .map(|a| (*a).clone())
+            .unwrap_or_default();
         let qwen_proc = Qwen3VLImageProcessor { max_edge: None };
 
         let mut all_pixels = Vec::new();
@@ -284,6 +289,7 @@ impl InputsProcessor for EmbeddingInputsProcessor {
 pub struct EmbeddingProcessor {
     pub has_causal_attention: bool,
     pub vision_image_token_id: Option<u32>,
+    pub vision_preprocessor_config: Option<Arc<PreProcessorConfig>>,
 }
 
 impl Processor for EmbeddingProcessor {
@@ -291,6 +297,7 @@ impl Processor for EmbeddingProcessor {
         Arc::new(EmbeddingInputsProcessor {
             has_causal_attention: self.has_causal_attention,
             vision_image_token_id: self.vision_image_token_id,
+            vision_preprocessor_config: self.vision_preprocessor_config.clone(),
         })
     }
     fn get_special_tokens(&self) -> &[&'static str] {
