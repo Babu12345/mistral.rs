@@ -13,6 +13,9 @@ use crate::{
         InputProcessorOutput, InputsProcessor, InputsProcessorType, MessagesAction, Processor,
     },
     sequence::Sequence,
+    vision_models::{
+        preprocessor_config::PreProcessorConfig, qwen3_vl::inputs_processor::Qwen3VLImageProcessor,
+    },
 };
 
 fn _make_tensor_with_pad<D: WithDType>(
@@ -141,6 +144,89 @@ pub struct EmbeddingInputsProcessor {
     pub vision_image_token_id: Option<u32>,
 }
 
+impl EmbeddingInputsProcessor {
+    // Build VisionEmbeddingMeta from any images attached to the input sequences.
+    // Returns None if vision isn't configured or no sequence has images.
+    // Uses Qwen3VLImageProcessor's preprocess_inner with a default
+    // PreProcessorConfig (the Qwen3VL helper reads sane fallbacks from
+    // Self::patch_size / merge_size / temporal_patch_size when fields are
+    // absent, matching the HF defaults).
+    fn build_vision_meta(
+        &self,
+        input_seqs: &[&mut Sequence],
+        device: &Device,
+    ) -> Result<Option<VisionEmbeddingMeta>> {
+        let Some(image_token_id) = self.vision_image_token_id else {
+            return Ok(None);
+        };
+        if !input_seqs.iter().any(|seq| seq.has_images()) {
+            return Ok(None);
+        }
+
+        let preproc_cfg = PreProcessorConfig::default();
+        let qwen_proc = Qwen3VLImageProcessor { max_edge: None };
+
+        let mut all_pixels = Vec::new();
+        let mut all_grids: Vec<(u32, u32, u32)> = Vec::new();
+        let mut all_hashes: Vec<u64> = Vec::new();
+        let mut continuous_img_pad = Vec::with_capacity(input_seqs.len());
+        let mut seqlens = Vec::with_capacity(input_seqs.len());
+
+        for seq in input_seqs.iter() {
+            let toks = seq.get_toks();
+            seqlens.push(toks.len());
+
+            let mut spans: Vec<(usize, usize)> = Vec::new();
+            let mut i = 0;
+            while i < toks.len() {
+                if toks[i] == image_token_id {
+                    let start = i;
+                    while i < toks.len() && toks[i] == image_token_id {
+                        i += 1;
+                    }
+                    spans.push((start, i));
+                } else {
+                    i += 1;
+                }
+            }
+            continuous_img_pad.push(spans);
+
+            if let Some(images) = seq.images() {
+                for img in images {
+                    let (w, h) = (img.width(), img.height());
+                    let (pixels, grid) = qwen_proc
+                        .preprocess_inner(vec![img.clone()], &preproc_cfg, device, (h, w))
+                        .map_err(anyhow::Error::msg)?;
+                    all_pixels.push(pixels);
+                    all_grids.push(grid);
+                }
+            }
+            if let Some(hashes) = seq.image_hashes() {
+                all_hashes.extend_from_slice(hashes);
+            }
+        }
+
+        if all_pixels.is_empty() {
+            return Ok(None);
+        }
+        let pixel_values = Tensor::cat(&all_pixels, 0).map_err(anyhow::Error::msg)?;
+        let grid_flat: Vec<u32> = all_grids
+            .iter()
+            .flat_map(|&(t, h, w)| [t, h, w])
+            .collect();
+        let image_grid_thw =
+            Tensor::from_vec(grid_flat, (all_grids.len(), 3), device).map_err(anyhow::Error::msg)?;
+
+        Ok(Some(VisionEmbeddingMeta {
+            pixel_values,
+            image_grid_thw,
+            seqlens,
+            continuous_img_pad,
+            image_hashes: all_hashes,
+        }))
+    }
+}
+
 impl InputsProcessor for EmbeddingInputsProcessor {
     fn process_inputs(
         &self,
@@ -178,13 +264,11 @@ impl InputsProcessor for EmbeddingInputsProcessor {
                 },
             seq_indices,
         } = metadata;
-        // D1: vision metadata threading lands with Batch E (pipeline wires
-        // PreProcessorConfig + image_token_id through). For now the field is
-        // always None; vision-bearing requests will be rejected upstream.
+        let vision = self.build_vision_meta(input_seqs, device)?;
         let inputs: Box<dyn Any> = Box::new(ModelInputs {
             input_ids,
             flash_meta,
-            vision: None,
+            vision,
         });
         Ok(InputProcessorOutput {
             inputs,

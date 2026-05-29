@@ -25,8 +25,8 @@ use tokenizers::Tokenizer;
 use super::Qwen3VLVisionSpecificArgs;
 
 // Input processor
-struct Qwen3VLImageProcessor {
-    max_edge: Option<u32>,
+pub(crate) struct Qwen3VLImageProcessor {
+    pub(crate) max_edge: Option<u32>,
 }
 
 impl Qwen3VLImageProcessor {

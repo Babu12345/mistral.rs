@@ -671,23 +671,29 @@ impl Loader for EmbeddingLoader {
                 cache_engine: None,
                 model_metadata: None,
                 modalities: Modalities {
-                    input: vec![SupportedModality::Text],
+                    input: if self.inner.supports_vision() {
+                        vec![SupportedModality::Text, SupportedModality::Vision]
+                    } else {
+                        vec![SupportedModality::Text]
+                    },
                     output: vec![SupportedModality::Embedding],
                 },
             }),
             topology: self.config.topology.clone(),
             silent,
-            config,
             modules_ser,
             modules_manifest: modules_config,
             mapper: pipeline_mapper,
             modules,
             processor: Arc::new(EmbeddingProcessor {
                 has_causal_attention,
-                // Vision-input dispatch is wired in Batch E; loader.supports_vision()
-                // gates whether we populate the image_token_id here.
-                vision_image_token_id: None,
+                vision_image_token_id: if self.inner.supports_vision() {
+                    self.inner.vision_image_token_id(&config).ok().flatten()
+                } else {
+                    None
+                },
             }),
+            config,
         })))
     }
 

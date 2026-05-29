@@ -78,6 +78,13 @@ pub trait EmbeddingModelLoader: IsqModelLoader + Send + Sync + DeviceMappedModel
     fn supports_vision(&self) -> bool {
         false
     }
+
+    // For vision-capable loaders: token id used to mark image placeholder
+    // positions in the prompt. The input processor scans for runs of this
+    // id to build continuous_img_pad spans. Returns None for text-only.
+    fn vision_image_token_id(&self, _config: &str) -> Result<Option<u32>> {
+        Ok(None)
+    }
     fn get_device_for_tensor(
         &self,
         config: &str,
@@ -809,6 +816,10 @@ impl EmbeddingModelLoader for Qwen3VLEmbeddingLoader {
     }
     fn supports_vision(&self) -> bool {
         true
+    }
+    fn vision_image_token_id(&self, config: &str) -> Result<Option<u32>> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        Ok(Some(cfg.image_token_id))
     }
 }
 
