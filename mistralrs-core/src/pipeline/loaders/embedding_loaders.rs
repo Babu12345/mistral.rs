@@ -848,28 +848,57 @@ impl DeviceMappedModelLoader for Qwen3VLEmbeddingLoader {
         config: &str,
         params: &AutoDeviceMapParams,
     ) -> Result<usize> {
-        // Embedding requests are single-shot prompts. Accept either Text or
-        // Multimodal sizing params depending on how the auto-mapper invoked us.
-        let (max_seq, max_bs) = match params {
+        // Mirror Qwen3VLLoader's text-attention sizing. Vision tokens get spliced
+        // into the text embeds at inference, so they extend the effective text
+        // seq_len at attention time.
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        let (max_seq, max_bs, img_seq_len) = match params {
             AutoDeviceMapParams::Text {
                 max_seq_len,
                 max_batch_size,
-            } => (*max_seq_len, *max_batch_size),
+            } => (*max_seq_len, *max_batch_size, 0usize),
             AutoDeviceMapParams::Multimodal {
                 max_seq_len,
                 max_batch_size,
-                ..
-            } => (*max_seq_len, *max_batch_size),
+                max_image_shape,
+                max_num_images,
+            } => {
+                let vcfg = &cfg.vision_config;
+                let grid_h = (max_image_shape.0 / vcfg.patch_size) / vcfg.spatial_merge_size;
+                let grid_w = (max_image_shape.1 / vcfg.patch_size) / vcfg.spatial_merge_size;
+                (*max_seq_len, *max_batch_size, grid_h * grid_w * max_num_images)
+            }
         };
-        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
-        Ok(max_bs * cfg.text_config.num_attention_heads * max_seq.min(ATTENTION_CHUNK_SIZE).pow(2))
+        let effective_seq = img_seq_len + max_seq.min(ATTENTION_CHUNK_SIZE);
+        Ok(max_bs * cfg.text_config.num_attention_heads * effective_seq * effective_seq)
     }
     fn non_mapped_max_act_size_elems(
         &self,
-        _config: &str,
-        _params: &AutoDeviceMapParams,
+        config: &str,
+        params: &AutoDeviceMapParams,
     ) -> Result<usize> {
-        Ok(0)
+        // The vision tower's self-attention is the dominant transient allocation
+        // during forward. Reserve room for it off-mapper so layer mapping doesn't
+        // claim every last byte and starve vision at load time.
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        let (max_bs, max_image_shape, max_num_images) = match params {
+            AutoDeviceMapParams::Multimodal {
+                max_batch_size,
+                max_image_shape,
+                max_num_images,
+                ..
+            } => (*max_batch_size, *max_image_shape, *max_num_images),
+            AutoDeviceMapParams::Text { max_batch_size, .. } => {
+                // Conservative default: assume one 1024x1024 image even when
+                // params are text-only, since this is a vision-capable embedder.
+                (*max_batch_size, (1024usize, 1024usize), 1usize)
+            }
+        };
+        let vcfg = &cfg.vision_config;
+        let grid_h = max_image_shape.0 / vcfg.patch_size;
+        let grid_w = max_image_shape.1 / vcfg.patch_size;
+        let img_seq_len = grid_h * grid_w;
+        Ok((max_bs * max_num_images) * vcfg.num_heads * img_seq_len * img_seq_len)
     }
 
     fn non_mapped_size_in_bytes(
