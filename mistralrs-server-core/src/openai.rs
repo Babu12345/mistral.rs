@@ -741,12 +741,25 @@ pub struct CompletionRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EmbeddingImageUrl {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EmbeddingMultimodalInput {
+    pub text: String,
+    #[serde(default)]
+    pub image_url: Vec<EmbeddingImageUrl>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum EmbeddingInput {
     Single(String),
     Multiple(Vec<String>),
     Tokens(Vec<u32>),
     TokensBatch(Vec<Vec<u32>>),
+    Multimodal(EmbeddingMultimodalInput),
 }
 
 impl PartialSchema for EmbeddingInput {
