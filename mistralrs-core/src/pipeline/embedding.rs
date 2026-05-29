@@ -489,9 +489,14 @@ impl Loader for EmbeddingLoader {
         // device per-layer, and linear constructors will override to CPU for ISQ-targeted weights.
         // On integrated/unified memory systems (e.g. Grace Blackwell), CPU and GPU share memory,
         // so we load directly to the device.
+        // MISTRALRS_FORCE_CPU_LOAD=1: opt out of the integrated-GPU fast path for
+        // small integrated GPUs (Jetson Orin Nano) where the CUDA allocator
+        // working set is the bottleneck even with unified memory.
+        let force_cpu_load =
+            std::env::var("MISTRALRS_FORCE_CPU_LOAD").as_deref() == Ok("1");
         let load_device = if !loading_isq {
             loading_isq = false;
-            if use_immediate && !crate::utils::normal::is_integrated_gpu(&device) {
+            if use_immediate && (force_cpu_load || !crate::utils::normal::is_integrated_gpu(&device)) {
                 Device::Cpu
             } else {
                 device.clone()
