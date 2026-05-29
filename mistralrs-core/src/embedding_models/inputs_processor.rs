@@ -145,16 +145,21 @@ pub struct EmbeddingInputsProcessor {
     pub vision_preprocessor_config: Option<Arc<PreProcessorConfig>>,
 }
 
+// Max edge (pixels) for input images before vision-tower preprocessing.
+// Caps the patch count to keep the vision encoder's attention activation
+// memory bounded on small GPUs - 512px square with patch=16, merge=2
+// produces 256 patches and ~64 post-merge tokens, comfortable on 8GB Orin.
+const MAX_IMAGE_EDGE: u32 = 512;
+
 impl EmbeddingInputsProcessor {
     // Build VisionEmbeddingMeta from any images attached to the input sequences.
     // Returns None if vision isn't configured or no sequence has images.
-    // Uses Qwen3VLImageProcessor's preprocess_inner with a default
-    // PreProcessorConfig (the Qwen3VL helper reads sane fallbacks from
-    // Self::patch_size / merge_size / temporal_patch_size when fields are
-    // absent, matching the HF defaults).
+    // Side effect: appends image-placeholder tokens to each sequence's token
+    // stream so the model's forward has somewhere to splice the image
+    // embeddings into the input_embeds tensor.
     fn build_vision_meta(
         &self,
-        input_seqs: &[&mut Sequence],
+        input_seqs: &mut [&mut Sequence],
         device: &Device,
     ) -> Result<Option<VisionEmbeddingMeta>> {
         let Some(image_token_id) = self.vision_image_token_id else {
@@ -170,42 +175,52 @@ impl EmbeddingInputsProcessor {
             .map(|a| (*a).clone())
             .unwrap_or_default();
         let qwen_proc = Qwen3VLImageProcessor { max_edge: None };
+        let merge_size = preproc_cfg.merge_size.unwrap_or(2);
 
         let mut all_pixels = Vec::new();
         let mut all_grids: Vec<(u32, u32, u32)> = Vec::new();
         let mut all_hashes: Vec<u64> = Vec::new();
-        let mut continuous_img_pad = Vec::with_capacity(input_seqs.len());
+        let mut continuous_img_pad: Vec<Vec<(usize, usize)>> = Vec::with_capacity(input_seqs.len());
         let mut seqlens = Vec::with_capacity(input_seqs.len());
 
-        for seq in input_seqs.iter() {
-            let toks = seq.get_toks();
-            seqlens.push(toks.len());
+        for seq in input_seqs.iter_mut() {
+            let images = seq.clone_images().unwrap_or_default();
 
-            let mut spans: Vec<(usize, usize)> = Vec::new();
-            let mut i = 0;
-            while i < toks.len() {
-                if toks[i] == image_token_id {
-                    let start = i;
-                    while i < toks.len() && toks[i] == image_token_id {
-                        i += 1;
-                    }
-                    spans.push((start, i));
-                } else {
-                    i += 1;
-                }
+            let mut seq_post_merge: usize = 0;
+            let mut seq_grids: Vec<(u32, u32, u32)> = Vec::new();
+            for img in &images {
+                let resized = resize_max_edge(img, MAX_IMAGE_EDGE);
+                let (w, h) = (resized.width(), resized.height());
+                let (pixels, grid) = qwen_proc
+                    .preprocess_inner(vec![resized], &preproc_cfg, device, (h, w))
+                    .map_err(anyhow::Error::msg)?;
+                let merge_sq = merge_size * merge_size;
+                let patches = (grid.0 as usize) * (grid.1 as usize) * (grid.2 as usize);
+                let post = patches / merge_sq.max(1);
+                seq_post_merge += post;
+                seq_grids.push(grid);
+                all_pixels.push(pixels);
             }
-            continuous_img_pad.push(spans);
+            all_grids.extend(seq_grids);
 
-            if let Some(images) = seq.images() {
-                for img in images {
-                    let (w, h) = (img.width(), img.height());
-                    let (pixels, grid) = qwen_proc
-                        .preprocess_inner(vec![img.clone()], &preproc_cfg, device, (h, w))
-                        .map_err(anyhow::Error::msg)?;
-                    all_pixels.push(pixels);
-                    all_grids.push(grid);
-                }
-            }
+            // Inject post-merge image tokens at the head of this sequence so the
+            // splice logic has somewhere to land. continuous_img_pad span runs
+            // [0, seq_post_merge); the original prompt tokens follow.
+            let mut existing = seq.get_toks().to_vec();
+            let mut new_toks: Vec<u32> = std::iter::repeat(image_token_id)
+                .take(seq_post_merge)
+                .collect();
+            let span_end = new_toks.len();
+            new_toks.append(&mut existing);
+            seq.set_toks(new_toks.clone());
+
+            seqlens.push(new_toks.len());
+            continuous_img_pad.push(if seq_post_merge > 0 {
+                vec![(0, span_end)]
+            } else {
+                Vec::new()
+            });
+
             if let Some(hashes) = seq.image_hashes() {
                 all_hashes.extend_from_slice(hashes);
             }
@@ -230,6 +245,18 @@ impl EmbeddingInputsProcessor {
             image_hashes: all_hashes,
         }))
     }
+}
+
+fn resize_max_edge(img: &image::DynamicImage, max_edge: u32) -> image::DynamicImage {
+    let (w, h) = (img.width(), img.height());
+    let m = w.max(h);
+    if m <= max_edge {
+        return img.clone();
+    }
+    let scale = max_edge as f32 / m as f32;
+    let new_w = ((w as f32 * scale) as u32).max(1);
+    let new_h = ((h as f32 * scale) as u32).max(1);
+    img.resize_exact(new_w, new_h, image::imageops::FilterType::CatmullRom)
 }
 
 impl InputsProcessor for EmbeddingInputsProcessor {

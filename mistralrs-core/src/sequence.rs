@@ -906,6 +906,13 @@ impl Sequence {
         self.prefill_prompt_toks = Some(toks)
     }
 
+    // Replace the sequence's prompt-side token stream. Used by the embedding
+    // input processor to inject image-placeholder tokens before the model
+    // forward, when the request supplies images outside the chat template.
+    pub fn set_toks(&mut self, toks: Vec<u32>) {
+        self.tokens = toks;
+    }
+
     /// Remove the prefill tokens.
     pub fn reset_prefill_toks(&mut self) {
         self.prefill_prompt_toks = None
