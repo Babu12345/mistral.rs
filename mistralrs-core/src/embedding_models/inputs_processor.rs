@@ -143,6 +143,7 @@ pub struct EmbeddingInputsProcessor {
     pub has_causal_attention: bool,
     pub vision_image_token_id: Option<u32>,
     pub vision_preprocessor_config: Option<Arc<PreProcessorConfig>>,
+    pub vision_boundary_token_ids: Option<(u32, u32)>,
 }
 
 // Max edge (pixels) for input images before vision-tower preprocessing.
@@ -203,20 +204,37 @@ impl EmbeddingInputsProcessor {
             }
             all_grids.extend(seq_grids);
 
-            // Inject post-merge image tokens at the head of this sequence so the
-            // splice logic has somewhere to land. continuous_img_pad span runs
-            // [0, seq_post_merge); the original prompt tokens follow.
-            let mut existing = seq.get_toks().to_vec();
-            let mut new_toks: Vec<u32> = std::iter::repeat(image_token_id)
-                .take(seq_post_merge)
-                .collect();
-            let span_end = new_toks.len();
-            new_toks.append(&mut existing);
+            // Inject the image span at the head of the sequence with vision
+            // boundary wrappers so get_rope_index can detect the span:
+            //   <|vision_start|> <|image_pad|> * N <|vision_end|>  || original prompt
+            // The continuous_img_pad span covers ONLY the image_pad tokens,
+            // not the boundary tokens (since the model splices image embeddings
+            // into image_pad positions only).
+            let existing = seq.get_toks().to_vec();
+            let mut new_toks: Vec<u32> = Vec::with_capacity(seq_post_merge + 2 + existing.len());
+            let (img_span_start, img_span_end) = if seq_post_merge > 0 {
+                if let Some((vstart, vend)) = self.vision_boundary_token_ids {
+                    new_toks.push(vstart);
+                    let start = new_toks.len();
+                    new_toks.extend(std::iter::repeat(image_token_id).take(seq_post_merge));
+                    let end = new_toks.len();
+                    new_toks.push(vend);
+                    (start, end)
+                } else {
+                    let start = new_toks.len();
+                    new_toks.extend(std::iter::repeat(image_token_id).take(seq_post_merge));
+                    let end = new_toks.len();
+                    (start, end)
+                }
+            } else {
+                (0, 0)
+            };
+            new_toks.extend(existing);
             seq.set_toks(new_toks.clone());
 
             seqlens.push(new_toks.len());
             continuous_img_pad.push(if seq_post_merge > 0 {
-                vec![(0, span_end)]
+                vec![(img_span_start, img_span_end)]
             } else {
                 Vec::new()
             });
@@ -317,6 +335,7 @@ pub struct EmbeddingProcessor {
     pub has_causal_attention: bool,
     pub vision_image_token_id: Option<u32>,
     pub vision_preprocessor_config: Option<Arc<PreProcessorConfig>>,
+    pub vision_boundary_token_ids: Option<(u32, u32)>,
 }
 
 impl Processor for EmbeddingProcessor {
@@ -325,6 +344,7 @@ impl Processor for EmbeddingProcessor {
             has_causal_attention: self.has_causal_attention,
             vision_image_token_id: self.vision_image_token_id,
             vision_preprocessor_config: self.vision_preprocessor_config.clone(),
+            vision_boundary_token_ids: self.vision_boundary_token_ids,
         })
     }
     fn get_special_tokens(&self) -> &[&'static str] {

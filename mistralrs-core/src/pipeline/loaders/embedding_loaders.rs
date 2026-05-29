@@ -99,6 +99,14 @@ pub trait EmbeddingModelLoader: IsqModelLoader + Send + Sync + DeviceMappedModel
     ) -> Result<Option<crate::vision_models::preprocessor_config::PreProcessorConfig>> {
         Ok(None)
     }
+
+    // For vision-capable loaders: token ids that bracket an image span in the
+    // prompt. The input processor wraps each image's image_token_id run with
+    // these so the model's MRoPE position computation (get_rope_index) can
+    // detect the spans correctly.
+    fn vision_boundary_token_ids(&self, _config: &str) -> Result<Option<(u32, u32)>> {
+        Ok(None)
+    }
     fn get_device_for_tensor(
         &self,
         config: &str,
@@ -369,6 +377,9 @@ impl EmbeddingModelLoader for AutoEmbeddingLoader {
         config: &str,
     ) -> Result<Option<crate::vision_models::preprocessor_config::PreProcessorConfig>> {
         Self::get_loader(config)?.vision_preprocessor_config(config)
+    }
+    fn vision_boundary_token_ids(&self, config: &str) -> Result<Option<(u32, u32)>> {
+        Self::get_loader(config)?.vision_boundary_token_ids(config)
     }
 }
 
@@ -859,6 +870,10 @@ impl EmbeddingModelLoader for Qwen3VLEmbeddingLoader {
         pre.merge_size = Some(cfg.vision_config.spatial_merge_size);
         pre.temporal_patch_size = Some(cfg.vision_config.temporal_patch_size);
         Ok(Some(pre))
+    }
+    fn vision_boundary_token_ids(&self, config: &str) -> Result<Option<(u32, u32)>> {
+        let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
+        Ok(Some((cfg.vision_start_token_id, cfg.vision_end_token_id)))
     }
 }
 

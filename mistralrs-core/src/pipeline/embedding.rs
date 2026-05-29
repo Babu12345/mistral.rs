@@ -706,6 +706,11 @@ impl Loader for EmbeddingLoader {
                 } else {
                     None
                 },
+                vision_boundary_token_ids: if self.inner.supports_vision(&config) {
+                    self.inner.vision_boundary_token_ids(&config).ok().flatten()
+                } else {
+                    None
+                },
             }),
             config,
         })))
