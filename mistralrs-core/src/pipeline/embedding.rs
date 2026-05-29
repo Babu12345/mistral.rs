@@ -676,7 +676,7 @@ impl Loader for EmbeddingLoader {
                 cache_engine: None,
                 model_metadata: None,
                 modalities: Modalities {
-                    input: if self.inner.supports_vision() {
+                    input: if self.inner.supports_vision(&config) {
                         vec![SupportedModality::Text, SupportedModality::Vision]
                     } else {
                         vec![SupportedModality::Text]
@@ -692,7 +692,7 @@ impl Loader for EmbeddingLoader {
             modules,
             processor: Arc::new(EmbeddingProcessor {
                 has_causal_attention,
-                vision_image_token_id: if self.inner.supports_vision() {
+                vision_image_token_id: if self.inner.supports_vision(&config) {
                     self.inner.vision_image_token_id(&config).ok().flatten()
                 } else {
                     None

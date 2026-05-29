@@ -75,7 +75,9 @@ pub trait EmbeddingModelLoader: IsqModelLoader + Send + Sync + DeviceMappedModel
 
     // Whether this loader produces a model that accepts image input. Gates
     // image-aware request routing and modality reporting in the pipeline.
-    fn supports_vision(&self) -> bool {
+    // Takes config so AutoEmbeddingLoader can route based on the detected
+    // architecture; text-only loaders ignore it.
+    fn supports_vision(&self, _config: &str) -> bool {
         false
     }
 
@@ -341,6 +343,14 @@ impl EmbeddingModelLoader for AutoEmbeddingLoader {
     }
     fn is_gptx(&self, config: &str) -> Result<bool> {
         Self::get_loader(config)?.is_gptx(config)
+    }
+    fn supports_vision(&self, config: &str) -> bool {
+        Self::get_loader(config)
+            .map(|l| l.supports_vision(config))
+            .unwrap_or(false)
+    }
+    fn vision_image_token_id(&self, config: &str) -> Result<Option<u32>> {
+        Self::get_loader(config)?.vision_image_token_id(config)
     }
 }
 
@@ -814,7 +824,7 @@ impl EmbeddingModelLoader for Qwen3VLEmbeddingLoader {
         let cfg: crate::vision_models::qwen3_vl::config::Config = serde_json::from_str(config)?;
         Ok(Box::new(cfg))
     }
-    fn supports_vision(&self) -> bool {
+    fn supports_vision(&self, _config: &str) -> bool {
         true
     }
     fn vision_image_token_id(&self, config: &str) -> Result<Option<u32>> {
