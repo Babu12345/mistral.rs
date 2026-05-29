@@ -130,6 +130,7 @@ impl SearchPipeline {
             let inputs = Box::new(ModelInputs {
                 input_ids: chunk.input,
                 flash_meta: chunk.flash_meta,
+                vision: None,
             });
             let mut pipeline = get_mut_arcmutex!(self.model);
             let ForwardInputsResult::Embeddings { embeddings } =

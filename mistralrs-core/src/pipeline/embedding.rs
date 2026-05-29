@@ -684,6 +684,9 @@ impl Loader for EmbeddingLoader {
             modules,
             processor: Arc::new(EmbeddingProcessor {
                 has_causal_attention,
+                // Vision-input dispatch is wired in Batch E; loader.supports_vision()
+                // gates whether we populate the image_token_id here.
+                vision_image_token_id: None,
             }),
         })))
     }
@@ -783,9 +786,22 @@ impl Pipeline for EmbeddingPipeline {
         let ModelInputs {
             input_ids,
             flash_meta,
+            vision,
         } = *inputs.downcast::<ModelInputs>().expect("Downcast failed.");
 
-        let mut xs = self.model.forward(&input_ids, &flash_meta)?;
+        let mut xs = if let Some(v) = vision {
+            self.model.forward_vision(
+                &input_ids,
+                &v.pixel_values,
+                &v.image_grid_thw,
+                v.seqlens,
+                v.continuous_img_pad,
+                &v.image_hashes,
+                &flash_meta,
+            )?
+        } else {
+            self.model.forward(&input_ids, &flash_meta)?
+        };
         for module in &self.modules {
             xs = module.forward(&xs)?;
         }

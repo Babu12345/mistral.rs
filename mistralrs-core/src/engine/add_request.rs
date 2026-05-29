@@ -153,6 +153,7 @@ impl Engine {
 
         let images = match request.messages {
             RequestMessage::MultimodalChat { ref images, .. } => Some(images.clone()),
+            RequestMessage::EmbeddingMultimodal { ref images, .. } => Some(images.clone()),
             _ => None,
         };
 

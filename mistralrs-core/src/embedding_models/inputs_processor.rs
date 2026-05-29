@@ -121,13 +121,24 @@ pub(crate) fn get_prompt_input<T: WithDType + std::fmt::Debug>(
 }
 
 #[derive(Clone)]
+pub struct VisionEmbeddingMeta {
+    pub pixel_values: Tensor,
+    pub image_grid_thw: Tensor,
+    pub seqlens: Vec<usize>,
+    pub continuous_img_pad: Vec<Vec<(usize, usize)>>,
+    pub image_hashes: Vec<u64>,
+}
+
+#[derive(Clone)]
 pub struct ModelInputs {
     pub input_ids: Tensor,
     pub flash_meta: FlashParams,
+    pub vision: Option<VisionEmbeddingMeta>,
 }
 
 pub struct EmbeddingInputsProcessor {
     pub has_causal_attention: bool,
+    pub vision_image_token_id: Option<u32>,
 }
 
 impl InputsProcessor for EmbeddingInputsProcessor {
@@ -167,9 +178,13 @@ impl InputsProcessor for EmbeddingInputsProcessor {
                 },
             seq_indices,
         } = metadata;
+        // D1: vision metadata threading lands with Batch E (pipeline wires
+        // PreProcessorConfig + image_token_id through). For now the field is
+        // always None; vision-bearing requests will be rejected upstream.
         let inputs: Box<dyn Any> = Box::new(ModelInputs {
             input_ids,
             flash_meta,
+            vision: None,
         });
         Ok(InputProcessorOutput {
             inputs,
@@ -184,12 +199,14 @@ impl InputsProcessor for EmbeddingInputsProcessor {
 
 pub struct EmbeddingProcessor {
     pub has_causal_attention: bool,
+    pub vision_image_token_id: Option<u32>,
 }
 
 impl Processor for EmbeddingProcessor {
     fn inputs_processor(&self) -> Arc<dyn InputsProcessor> {
         Arc::new(EmbeddingInputsProcessor {
             has_causal_attention: self.has_causal_attention,
+            vision_image_token_id: self.vision_image_token_id,
         })
     }
     fn get_special_tokens(&self) -> &[&'static str] {
