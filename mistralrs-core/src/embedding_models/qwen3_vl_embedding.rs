@@ -73,11 +73,23 @@ impl Model {
         })
     }
 
+    // Embedding is single-shot prompt-only; the text model's persistent KV
+    // cache exists for generation reuse. Calling forward back-to-back without
+    // resetting it accumulates K/V from prior requests and the next forward's
+    // attention shape blows up (key dim grows by every prior request).
+    fn reset_text_cache(&self) {
+        let mut cache = self.text.cache.normal();
+        for kv in cache.0.iter_mut() {
+            kv.reset();
+        }
+    }
+
     fn forward_text_only(
         &self,
         input_ids: &Tensor,
         flash_params: &FlashParams,
     ) -> Result<Tensor> {
+        self.reset_text_cache();
         let attention_mask = CausalMasker.make_causal_mask(
             input_ids,
             &NotACache,
@@ -116,6 +128,7 @@ impl Model {
         continuous_img_pad: Vec<Vec<(usize, usize)>>,
         flash_params: &FlashParams,
     ) -> Result<Tensor> {
+        self.reset_text_cache();
         let attention_mask = CausalMasker.make_causal_mask(
             input_ids,
             &NotACache,
